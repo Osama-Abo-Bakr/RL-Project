@@ -1,46 +1,49 @@
 import numpy as np
-import gym
 import pygame
 import time
 from catch_me_env import CatchMeIfYouCanEnv
-from collections import defaultdict#Q table 
-state_space_size = 5 * 5
+from collections import defaultdict
+
+state_space_size = 5 * 5 * 5 * 5 * 5 * 5  # 15625 State
 action_space_size = 4
 
-# دوال المساعدة
-def state_to_index(agent_pos, enemy_pos, grid_size):
+def state_to_index(agent_pos, enemy_pos, gate_pos, grid_size):
     agent_x, agent_y = max(0, min(agent_pos[0], grid_size-1)), max(0, min(agent_pos[1], grid_size-1))
     enemy_x, enemy_y = max(0, min(enemy_pos[0], grid_size-1)), max(0, min(enemy_pos[1], grid_size-1))
+    gate_x, gate_y = max(0, min(gate_pos[0], grid_size-1)), max(0, min(gate_pos[1], grid_size-1))
     agent_idx = agent_x * grid_size + agent_y
     enemy_idx = enemy_x * grid_size + enemy_y
-    return agent_idx * (grid_size * grid_size) + enemy_idx
+    gate_idx = gate_x * grid_size + gate_y
+    return (agent_idx * (grid_size * grid_size) * (grid_size * grid_size) +
+            enemy_idx * (grid_size * grid_size) + gate_idx)
 
 def index_to_state(state_idx, grid_size):
+    gate_idx = state_idx % (grid_size * grid_size)
+    state_idx //= (grid_size * grid_size)
     enemy_idx = state_idx % (grid_size * grid_size)
-    agent_idx = state_idx // (grid_size * grid_size)#floor
+    agent_idx = state_idx // (grid_size * grid_size)
     agent_pos = [agent_idx // grid_size, agent_idx % grid_size]
     enemy_pos = [enemy_idx // grid_size, enemy_idx % grid_size]
-    return agent_pos, enemy_pos
+    gate_pos = [gate_idx // grid_size, gate_idx % grid_size]
+    return agent_pos, enemy_pos, gate_pos
 
 def get_policy_from_q(q_table):
     policy = {}
     for state in q_table:
         policy[state] = np.argmax(q_table[state])
     return policy
+
 def render_scene(screen, env, title, cell_size, grid_size, info_text, episode_or_iter=None):
     screen.fill((50, 50, 150))
     
-    # الشبكة
     for i in range(grid_size + 1):
         pygame.draw.line(screen, (200, 200, 200), (i * cell_size, 0), (i * cell_size, grid_size * cell_size), 1)
         pygame.draw.line(screen, (200, 200, 200), (0, i * cell_size), (grid_size * cell_size, i * cell_size), 1)
     
-    # العوائق
     for obstacle in env.obstacles_pos:
         pygame.draw.rect(screen, (150, 150, 150), 
                         (obstacle[0] * cell_size, obstacle[1] * cell_size, cell_size, cell_size))
     
-    # البوابة (سوداء)
     gate_center = (env.gate_pos[0] * cell_size + cell_size // 2, env.gate_pos[1] * cell_size + cell_size // 2)
     gate_points = [
         (gate_center[0], gate_center[1] - cell_size // 3),
@@ -50,18 +53,15 @@ def render_scene(screen, env, title, cell_size, grid_size, info_text, episode_or
     ]
     pygame.draw.polygon(screen, (0, 0, 0), gate_points)  
     
-    # الأعداء
     for enemy in env.enemies_pos:
         pygame.draw.rect(screen, (255, 0, 0), 
                         (enemy[0] * cell_size, enemy[1] * cell_size, cell_size, cell_size))
     
-    # العامل
     pygame.draw.circle(screen, (0, 255, 0), 
                       (int(env.agent_pos[0] * cell_size + cell_size // 2), 
                        int(env.agent_pos[1] * cell_size + cell_size // 2)), 
                       cell_size // 2 - 5)
     
-    # معلومات التدريب
     font = pygame.font.SysFont('Arial', 24)
     title_text = font.render(title, True, (255, 255, 255))
     info_text = font.render(info_text, True, (255, 255, 255))
@@ -75,25 +75,22 @@ def render_scene(screen, env, title, cell_size, grid_size, info_text, episode_or
     pygame.display.flip()
 
 def display_message(screen, message, color=(255, 255, 255)):
-    """عرض رسالة"""
     screen.fill((50, 50, 150))
     font = pygame.font.SysFont('Arial', 48)
     text = font.render(message, True, color)
-    text_rect = text.get_rect(center=(screen.get_width()//2, screen.get_height()//2))#بتخلي النص في نص الشاشه
+    text_rect = text.get_rect(center=(screen.get_width()//2, screen.get_height()//2))
     screen.blit(text, text_rect)
     pygame.display.flip()
     pygame.time.wait(2000)
 
-
-def value_iteration(env, screen, gamma=0.99, theta=1e-4, max_iterations=500):#theta هو امتا هنقف او مقدار التغير قد ايه 
-    V = np.zeros(state_space_size * state_space_size)
-    policy = np.zeros(state_space_size * state_space_size, dtype=int)
+def value_iteration(env, screen, gamma=0.99, theta=1e-4, max_iterations=2):
+    V = np.zeros(state_space_size)
+    policy = np.zeros(state_space_size, dtype=int)
     clock = pygame.time.Clock()
     
     for iteration in range(max_iterations):
         delta = 0
-        for state in range(state_space_size * state_space_size):
-            # إدارة أحداث PyGame
+        for state in range(state_space_size):
             for event in pygame.event.get():
                 if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_q):
                     pygame.quit()
@@ -101,22 +98,22 @@ def value_iteration(env, screen, gamma=0.99, theta=1e-4, max_iterations=500):#th
             
             v = V[state]
             q_values = np.zeros(action_space_size)
-            agent_pos, enemy_pos = index_to_state(state, env.grid_size)
+            agent_pos, enemy_pos, gate_pos = index_to_state(state, env.grid_size)
             
             for action in range(action_space_size):
                 env.reset()
                 env.agent_pos = agent_pos.copy()
                 env.enemies_pos = [enemy_pos.copy()]
+                env.gate_pos = gate_pos.copy()
                 next_obs, reward, done, _ = env.step(action)
                 
-                # عرض التدريب
                 render_scene(screen, env, "Value Iteration Training", env.cell_size, env.grid_size,
                            f"State: {state} | Action: {['Up','Down','Left','Right'][action]}", iteration+1)
                 clock.tick(20)
                 
                 next_agent_pos = env.agent_pos
                 next_enemy_pos = env.enemies_pos[0]
-                next_state = state_to_index(next_agent_pos, next_enemy_pos, env.grid_size)
+                next_state = state_to_index(next_agent_pos, next_enemy_pos, env.gate_pos, env.grid_size)
                 q_values[action] = reward + gamma * V[next_state] * (not done)
             
             V[state] = np.max(q_values)
@@ -128,7 +125,7 @@ def value_iteration(env, screen, gamma=0.99, theta=1e-4, max_iterations=500):#th
     
     return policy, V
 
-def sarsa(env, screen, episodes=1500, alpha=0.1, gamma=0.95, epsilon_start=1.0, epsilon_end=0.01):
+def sarsa(env, screen, episodes=500, alpha=0.1, gamma=0.95, epsilon_start=1.0, epsilon_end=0.01):
     Q = defaultdict(lambda: np.zeros(action_space_size))
     epsilon = epsilon_start
     epsilon_decay = (epsilon_start - epsilon_end) / episodes
@@ -136,56 +133,47 @@ def sarsa(env, screen, episodes=1500, alpha=0.1, gamma=0.95, epsilon_start=1.0, 
     
     for episode in range(episodes):
         obs = env.reset()
-        state = state_to_index(obs[:2], obs[2:4], env.grid_size)
+        state = state_to_index(obs[:2], obs[2:4], obs[-2:], env.grid_size)
         
-        # اختيار الإجراء الأول
         if np.random.rand() < epsilon:
             action = env.action_space.sample()
         else:
             action = np.argmax(Q[state])
         
-        while True:
-            # إدارة الأحداث
+        steps = 0
+        while steps < env.max_steps:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_q):
                     pygame.quit()
                     return None, None
             
             next_obs, reward, done, info = env.step(action)
-            next_state = state_to_index(next_obs[:2], next_obs[2:4], env.grid_size)
+            next_state = state_to_index(next_obs[:2], next_obs[2:4], next_obs[-2:], env.grid_size)
             
-            # مكافأة إضافية
-            if not done:
-                dist = abs(next_obs[0] - next_obs[-2]) + abs(next_obs[1] - next_obs[-1])
-                reward += 0.3 / (dist + 1)
-            
-            # اختيار الإجراء التالي
             if np.random.rand() < epsilon:
                 next_action = env.action_space.sample()
             else:
                 next_action = np.argmax(Q[next_state])
             
-            # تحديث Q-value
             td_target = reward + gamma * Q[next_state][next_action] * (not done)
             td_error = td_target - Q[state][action]
             Q[state][action] += alpha * td_error
             
-            # عرض التدريب
             render_scene(screen, env, "SARSA Training", env.cell_size, env.grid_size,
                        f"Episode: {episode+1}/{episodes} | Reward: {reward:.2f}", episode+1)
             clock.tick(20)
             
-            # تحديث إبسيلون
             epsilon = max(epsilon_end, epsilon - epsilon_decay)
             
             state, action = next_state, next_action
+            steps += 1
             
             if done:
                 break
     
     return get_policy_from_q(Q), Q
 
-def q_learning(env, screen, episodes=500, alpha=0.15, gamma=0.95, epsilon_start=1.0, epsilon_end=0.01):
+def q_learning(env, screen, episodes=100, alpha=0.15, gamma=0.95, epsilon_start=1.0, epsilon_end=0.01):
     Q = defaultdict(lambda: np.zeros(action_space_size))
     epsilon = epsilon_start
     epsilon_decay = (epsilon_start - epsilon_end) / episodes
@@ -193,44 +181,36 @@ def q_learning(env, screen, episodes=500, alpha=0.15, gamma=0.95, epsilon_start=
     
     for episode in range(episodes):
         obs = env.reset()
-        state = state_to_index(obs[:2], obs[2:4], env.grid_size)
+        state = state_to_index(obs[:2], obs[2:4], obs[-2:], env.grid_size)
         
-        while True:
-            # إدارة الأحداث
+        steps = 0
+        while steps < env.max_steps:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_q):
                     pygame.quit()
                     return None, None
             
-            # اختيار الإجراء
             if np.random.rand() < epsilon:
                 action = env.action_space.sample()
             else:
                 action = np.argmax(Q[state])
             
             next_obs, reward, done, info = env.step(action)
-            next_state = state_to_index(next_obs[:2], next_obs[2:4], env.grid_size)
+            next_state = state_to_index(next_obs[:2], next_obs[2:4], next_obs[-2:], env.grid_size)
             
-            # مكافأة إضافية
-            if not done:
-                gate_dist = abs(next_obs[0] - next_obs[-2]) + abs(next_obs[1] - next_obs[-1])
-                reward += 0.4 / (gate_dist + 1)
-            
-            # تحديث Q-value
             best_next_action = np.argmax(Q[next_state])
             td_target = reward + gamma * Q[next_state][best_next_action] * (not done)
             td_error = td_target - Q[state][action]
             Q[state][action] += alpha * td_error
             
-            # عرض التدريب
             render_scene(screen, env, "Q-Learning Training", env.cell_size, env.grid_size,
                        f"Episode: {episode+1}/{episodes} | Reward: {reward:.2f}", episode+1)
             clock.tick(20)
             
-            # تحديث إبسيلون
             epsilon = max(epsilon_end, epsilon - epsilon_decay)
             
             state = next_state
+            steps += 1
             
             if done:
                 break
@@ -238,29 +218,30 @@ def q_learning(env, screen, episodes=500, alpha=0.15, gamma=0.95, epsilon_start=
     return get_policy_from_q(Q), Q
 
 def policy_iteration(env, screen, gamma=0.99, theta=1e-4, max_iterations=2):
-    policy = np.random.randint(0, action_space_size, state_space_size * state_space_size)
-    V = np.zeros(state_space_size * state_space_size)
+    policy = np.random.randint(0, action_space_size, state_space_size)
+    V = np.zeros(state_space_size)
     clock = pygame.time.Clock()
     
     def evaluate_policy():
         for eval_iter in range(max_iterations):
             delta = 0
-            for state in range(state_space_size * state_space_size):
+            for state in range(state_space_size):
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_q):
                         return False
                 
                 v = V[state]
-                agent_pos, enemy_pos = index_to_state(state, env.grid_size)
+                agent_pos, enemy_pos, gate_pos = index_to_state(state, env.grid_size)
                 env.reset()
                 env.agent_pos = agent_pos.copy()
                 env.enemies_pos = [enemy_pos.copy()]
+                env.gate_pos = gate_pos.copy()
                 action = policy[state]
                 
                 next_obs, reward, done, _ = env.step(action)
                 next_agent_pos = env.agent_pos
                 next_enemy_pos = env.enemies_pos[0]
-                next_state = state_to_index(next_agent_pos, next_enemy_pos, env.grid_size)
+                next_state = state_to_index(next_agent_pos, next_enemy_pos, env.gate_pos, env.grid_size)
                 V[state] = reward + gamma * V[next_state] * (not done)
                 delta = max(delta, abs(v - V[state]))
                 
@@ -274,24 +255,25 @@ def policy_iteration(env, screen, gamma=0.99, theta=1e-4, max_iterations=2):
     
     def improve_policy():
         policy_stable = True
-        for state in range(state_space_size * state_space_size):
+        for state in range(state_space_size):
             for event in pygame.event.get():
                 if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_q):
                     return False, False
             
             old_action = policy[state]
             q_values = np.zeros(action_space_size)
-            agent_pos, enemy_pos = index_to_state(state, env.grid_size)
+            agent_pos, enemy_pos, gate_pos = index_to_state(state, env.grid_size)
             
             for action in range(action_space_size):
                 env.reset()
                 env.agent_pos = agent_pos.copy()
                 env.enemies_pos = [enemy_pos.copy()]
+                env.gate_pos = gate_pos.copy()
                 next_obs, reward, done, _ = env.step(action)
                 
                 next_agent_pos = env.agent_pos
                 next_enemy_pos = env.enemies_pos[0]
-                next_state = state_to_index(next_agent_pos, next_enemy_pos, env.grid_size)
+                next_state = state_to_index(next_agent_pos, next_enemy_pos, env.gate_pos, env.grid_size)
                 q_values[action] = reward + gamma * V[next_state] * (not done)
                 
                 render_scene(screen, env, "Policy Iteration (Improvement)", env.cell_size, env.grid_size,
@@ -314,9 +296,8 @@ def policy_iteration(env, screen, gamma=0.99, theta=1e-4, max_iterations=2):
     
     return policy, V
 
-# نافذة عرض الحركات
 def show_moves_history(screen, moves_history):
-    moves_screen = pygame.display.set_mode((600, 400))
+    moves_screen = pygame.display.set_mode((800, 600))
     pygame.display.set_caption("Movements History")
     
     moves_screen.fill((30, 30, 80))
@@ -325,52 +306,67 @@ def show_moves_history(screen, moves_history):
     font_header = pygame.font.SysFont('Arial', 22, bold=True)
     font_text = pygame.font.SysFont('Arial', 20)
     
-    # عنوان النافذة
-    title = font_title.render("Movements History - Step by Step", True, (255, 255, 255))
-    moves_screen.blit(title, (150, 20))
+    title = font_title.render("Movements History - All Steps", True, (255, 255, 255))
+    moves_screen.blit(title, (200, 20))
     
-    # عناوين الأعمدة
     step_header = font_header.render("Step", True, (255, 255, 0))
     agent_header = font_header.render("Agent Position", True, (0, 255, 0))
     enemies_header = font_header.render("Enemies Positions", True, (255, 0, 0))
     
     moves_screen.blit(step_header, (50, 70))
     moves_screen.blit(agent_header, (150, 70))
-    moves_screen.blit(enemies_header, (300, 70))
+    moves_screen.blit(enemies_header, (350, 70))
     
-    # عرض الحركات
-    for i, move in enumerate(moves_history[-15:]):  # عرض آخر 15 حركة فقط
-        step_text = font_text.render(f"{move['step']}", True, (255, 255, 255))
-        agent_text = font_text.render(f"({move['agent'][0]}, {move['agent'][1]})", True, (200, 255, 200))
+    scroll_y = 0
+    max_display_moves = 15
+    total_moves = len(moves_history)
+    
+    running = True
+    while running:
+        moves_screen.fill((30, 30, 80))
+        moves_screen.blit(title, (200, 20))
+        moves_screen.blit(step_header, (50, 70))
+        moves_screen.blit(agent_header, (150, 70))
+        moves_screen.blit(enemies_header, (350, 70))
         
-        enemies_pos = ", ".join([f"({e[0]}, {e[1]})" for e in move['enemies']])
-        enemies_text = font_text.render(enemies_pos, True, (255, 200, 200))
+        start_idx = max(0, min(scroll_y, total_moves - max_display_moves))
+        for i, move in enumerate(moves_history[start_idx:start_idx + max_display_moves]):
+            step_text = font_text.render(f"{move['step']}", True, (255, 255, 255))
+            agent_text = font_text.render(f"({move['agent'][0]}, {move['agent'][1]})", True, (200, 255, 200))
+            
+            enemies_pos = ", ".join([f"({e[0]}, {e[1]})" for e in move['enemies']])
+            enemies_text = font_text.render(enemies_pos, True, (255, 200, 200))
+            
+            y_pos = 100 + i * 25
+            moves_screen.blit(step_text, (50, y_pos))
+            moves_screen.blit(agent_text, (150, y_pos))
+            moves_screen.blit(enemies_text, (350, y_pos))
         
-        y_pos = 100 + i * 25
-        moves_screen.blit(step_text, (50, y_pos))
-        moves_screen.blit(agent_text, (150, y_pos))
-        moves_screen.blit(enemies_text, (300, y_pos))
-    
-    continue_text = font_text.render("Press any key to continue...", True, (255, 255, 0))
-    moves_screen.blit(continue_text, (200, 350))
-    
-    pygame.display.flip()
-    
-    # انتظار الضغط على أي مفتاح
-    waiting = True
-    while waiting:
+        scroll_text = font_text.render("Use UP/DOWN to scroll, Press any key to continue...", True, (255, 255, 0))
+        moves_screen.blit(scroll_text, (150, 550))
+        
+        pygame.display.flip()
+        
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
                 return False
-            if event.type == pygame.KEYDOWN or event.type == pygame.MOUSEBUTTONDOWN:
-                waiting = False
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_UP:
+                    scroll_y = max(0, scroll_y - 1)
+                elif event.key == pygame.K_DOWN:
+                    scroll_y = min(total_moves - 1, scroll_y + 1)
+                else:
+                    running = False
+                    break
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                running = False
                 break
+        
         pygame.time.wait(100)
     
     return True
 
-# تعديل دالة التقييم لتسجيل الحركات
 def evaluate_policy_with_levels(env, policy, title, screen):
     clock = pygame.time.Clock()
     level = 1
@@ -404,11 +400,10 @@ def evaluate_policy_with_levels(env, policy, title, screen):
         env.cell_size = 80
         
         obs = env.reset()
-        state = state_to_index(obs[:2], obs[2:4], env.grid_size)
+        state = state_to_index(obs[:2], obs[2:4], obs[-2:], env.grid_size)
         done = False
         steps = 0
         
-        # تسجيل حركات الـ Agent والأعداء
         moves_history = []
         
         while not done and steps < env.max_steps:
@@ -418,20 +413,18 @@ def evaluate_policy_with_levels(env, policy, title, screen):
                 action = env.action_space.sample()
             
             next_obs, reward, done, info = env.step(action)
-            next_state = state_to_index(next_obs[:2], next_obs[2:4], env.grid_size)
+            next_state = state_to_index(next_obs[:2], next_obs[2:4], next_obs[-2:], env.grid_size)
             
             steps += 1
             total_steps += 1
             total_reward += reward
             
-            # تسجيل الحركة الحالية
             moves_history.append({
                 'step': steps,
                 'agent': env.agent_pos.copy(),
                 'enemies': [pos.copy() for pos in env.enemies_pos]
             })
             
-            # عرض اللعبة
             action_names = ["Up", "Down", "Left", "Right"]
             render_scene(
                 screen, env, 
@@ -441,7 +434,6 @@ def evaluate_policy_with_levels(env, policy, title, screen):
             )
             clock.tick(10)
             
-            # التحكم في اللعبة
             for event in pygame.event.get():
                 if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_q):
                     running = False
@@ -449,26 +441,27 @@ def evaluate_policy_with_levels(env, policy, title, screen):
             
             state = next_state
             
-            if done:
+            if done or steps >= env.max_steps:
                 level_time = time.time() - level_start_time
                 
-                # عرض نافذة الحركات بعد كل مستوى
                 if not show_moves_history(screen, moves_history):
                     running = False
                 
                 if info.get('reason') == 'reached_gate':
                     levels_completed += 1
+                    display_message(screen, f"Level {level} Completed!", (0, 255, 0))
                     if level < max_levels:
                         level += 1
                     else:
                         display_message(screen, "All Levels Completed!", (0, 255, 0))
-                        running = False
                 elif info.get('reason') == 'caught':
                     display_message(screen, f"Game Over at Level {level}!", (255, 0, 0))
                     running = False
+                elif steps >= env.max_steps:
+                    display_message(screen, f"Level {level} Timeout!", (255, 255, 0))
+                    running = False
                 break
     
-    # التقرير النهائي
     duration = time.time() - start_time
     screen.fill((50, 50, 150))
     font = pygame.font.SysFont('Arial', 36)
@@ -482,17 +475,29 @@ def evaluate_policy_with_levels(env, policy, title, screen):
         f"Levels Completed: {levels_completed}/{max_levels}"
     ]
     
-    for i, line in enumerate(summary_lines):
-        text = font.render(line, True, (255, 255, 255))
-        text_rect = text.get_rect(center=(screen.get_width()//2, screen.get_height()//2 - 100 + i*40))
-        screen.blit(text, text_rect)
+    running = True
+    while running:
+        screen.fill((50, 50, 150))
+        for i, line in enumerate(summary_lines):
+            text = font.render(line, True, (255, 255, 255))
+            text_rect = text.get_rect(center=(screen.get_width()//2, screen.get_height()//2 - 100 + i*40))
+            screen.blit(text, text_rect)
+        
+        close_text = font.render("Press any key to close...", True, (255, 255, 0))
+        close_rect = close_text.get_rect(center=(screen.get_width()//2, screen.get_height() - 50))
+        screen.blit(close_text, close_rect)
+        
+        pygame.display.flip()
+        
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            if event.type == pygame.KEYDOWN or event.type == pygame.MOUSEBUTTONDOWN:
+                running = False
+        
+        pygame.time.wait(100)
     
-    pygame.display.flip()
-    pygame.time.wait(5000)
     env.close()
-
-# باقي الكود (الخوارزميات، render_scene، display_message) يبقى كما هو
-# ... [يتبع نفس الكود السابق للخوارزميات والدوال المساعدة] ...
 
 if __name__ == "__main__":
     pygame.init()
