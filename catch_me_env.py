@@ -70,6 +70,7 @@ class CatchMeIfYouCanEnv(gym.Env):
                 return pos
 
     def _get_obs(self) -> np.ndarray:
+   
         obs = np.array(self.agent_pos, dtype=np.int32)
         obs = np.concatenate([obs, np.array(self.enemies_pos).flatten()])
         obs = np.concatenate([obs, np.array(self.obstacles_pos).flatten()])
@@ -148,14 +149,8 @@ class CatchMeIfYouCanEnv(gym.Env):
                 done = True
                 return self._get_obs(), reward, done, {'reason': 'caught'}
         
-        # مكافأة الاقتراب من البوابة
-        dist_to_gate = abs(self.agent_pos[0] - self.gate_pos[0]) + abs(self.agent_pos[1] - self.gate_pos[1])
-        reward += 1 / (dist_to_gate + 1)
-        
-        # عقوبة الاقتراب من الأعداء
-        for enemy_pos in self.enemies_pos:
-            dist_to_enemy = abs(self.agent_pos[0] - enemy_pos[0]) + abs(self.agent_pos[1] - enemy_pos[1])
-            reward += -0.3 / (dist_to_enemy + 1)
+        dist_to_gate = abs(self.agent_pos[0] - self.gate_pos[0]) + abs(self.agent_pos[1] - self.gate_pos[1])#manhattan distance max 0.5
+        reward += 0.5 / (dist_to_gate + 1)
         
         if self.steps >= self.max_steps:
             done = True
@@ -170,7 +165,7 @@ class CatchMeIfYouCanEnv(gym.Env):
             pygame.init()
             window_size = self.grid_size * self.cell_size
             self.screen = pygame.display.set_mode((window_size, window_size))
-            self.clock = pygame.time.Clock()
+            self.clock = pygame.time.Clock()#frames
             pygame.display.set_caption("Catch Me If You Can")
         
         self.screen.fill(self.colors['background'])
@@ -224,7 +219,7 @@ class CatchMeIfYouCanEnv(gym.Env):
         )
         
         # عرض معلومات
-        font = pygame.font.SysFont(None, 24)
+        font = pygame.font.SysFont(None, 24)#الخط المتاح للنظام وحجمه 
         text = font.render(f"Steps: {self.steps}/{self.max_steps}", True, self.colors['text'])
         self.screen.blit(text, (5, 5))
         
